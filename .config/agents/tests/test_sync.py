@@ -53,6 +53,7 @@ class Layout:
         self.pi_dir = root / "pi"
         self.skills_dirs = [root / "claude-skills", root / "codex-skills", root / "pi-skills"]
         self.claude_md = root / "claude-home" / "CLAUDE.md"
+        self.codex_agents_md = root / "codex-home" / "AGENTS.md"
         self.pi_agents_md = root / "pi-home" / "AGENTS.md"
         self.pi_subagent_link = root / "pi-home" / "extensions" / "subagent"
         self.pi_package = self.add_pi_package(root / "node-v2")
@@ -91,6 +92,7 @@ class Layout:
                 "--pi-dir", str(self.pi_dir),
                 *[arg for skills_dir in self.skills_dirs for arg in ("--skills-dir", str(skills_dir))],
                 "--claude-md", str(self.claude_md),
+                "--codex-agents-md", str(self.codex_agents_md),
                 "--pi-agents-md", str(self.pi_agents_md),
                 "--pi-subagent-link", str(self.pi_subagent_link),
                 *(["--pi-package", str(self.pi_package)] if self.pi_package else []),
@@ -417,6 +419,7 @@ def test_links_global_instructions_and_pi_subagent_extension(layout: Layout) -> 
     assert layout.run() == 0
     agents_md = (layout.source_dir / "AGENTS.md").resolve()
     assert layout.claude_md.resolve() == agents_md
+    assert layout.codex_agents_md.resolve() == agents_md
     assert layout.pi_agents_md.resolve() == agents_md
     assert layout.pi_subagent_link.resolve() == (layout.pi_package / sync.PI_SUBAGENT_EXAMPLE).resolve()
 

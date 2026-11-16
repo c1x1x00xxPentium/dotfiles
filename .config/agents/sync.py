@@ -10,7 +10,7 @@ harness's skills directory. Every generated file carries ``GENERATED_MARKER``
 folder); the sync only replaces or removes files that carry it, so
 hand-written agents and skills in the same directories are safe.
 
-It also symlinks ``AGENTS.md`` into Claude Code and pi as their global
+It also symlinks ``AGENTS.md`` into Claude Code, Codex, and pi as their global
 instructions, and pi's shipped subagent extension into pi's extensions
 directory. A link is only created or repointed, never replaces a real file.
 """
@@ -40,6 +40,7 @@ DEFAULT_SKILLS_DIRS = (
     Path.home() / ".pi" / "agent" / "skills",
 )
 DEFAULT_CLAUDE_MD = Path.home() / ".claude" / "CLAUDE.md"
+DEFAULT_CODEX_AGENTS_MD = Path.home() / ".codex" / "AGENTS.md"
 DEFAULT_PI_AGENTS_MD = Path.home() / ".pi" / "agent" / "AGENTS.md"
 DEFAULT_PI_SUBAGENT_LINK = Path.home() / ".pi" / "agent" / "extensions" / "subagent"
 NVM_NODE_DIR = Path.home() / ".nvm" / "versions" / "node"
@@ -470,13 +471,20 @@ def find_pi_package() -> Path | None:
 
 
 def desired_links(
-    source_dir: Path, claude_md: Path, pi_agents_md: Path, pi_subagent_link: Path, pi_package: Path | None
+    source_dir: Path,
+    claude_md: Path,
+    codex_agents_md: Path,
+    pi_agents_md: Path,
+    pi_subagent_link: Path,
+    pi_package: Path | None,
 ) -> list[Link]:
     agents_md = source_dir.resolve() / AGENTS_MD
     if not agents_md.is_file():
         raise ConfigError(f"{agents_md}: missing")
     owned_agents_md = Path(source_dir.resolve().name) / AGENTS_MD
-    links = [Link(claude_md, agents_md, owned_agents_md), Link(pi_agents_md, agents_md, owned_agents_md)]
+    links = [
+        Link(path, agents_md, owned_agents_md) for path in (claude_md, codex_agents_md, pi_agents_md)
+    ]
     if pi_package is not None:
         subagent = pi_package / PI_SUBAGENT_EXAMPLE
         if not subagent.is_dir():
@@ -524,6 +532,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="skills directory to sync into; repeat for several (default: Claude Code, Codex, and pi)",
     )
     parser.add_argument("--claude-md", type=Path, default=DEFAULT_CLAUDE_MD)
+    parser.add_argument("--codex-agents-md", type=Path, default=DEFAULT_CODEX_AGENTS_MD)
     parser.add_argument("--pi-agents-md", type=Path, default=DEFAULT_PI_AGENTS_MD)
     parser.add_argument("--pi-subagent-link", type=Path, default=DEFAULT_PI_SUBAGENT_LINK)
     parser.add_argument(
@@ -543,7 +552,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         changes = plan_changes(outputs, args.claude_dir, args.codex_dir, args.pi_dir, skills_dirs)
         links = desired_links(
-            args.source_dir, args.claude_md, args.pi_agents_md, args.pi_subagent_link, pi_package
+            args.source_dir,
+            args.claude_md,
+            args.codex_agents_md,
+            args.pi_agents_md,
+            args.pi_subagent_link,
+            pi_package,
         )
         link_changes = plan_links(links)
     except (ConfigError, json.JSONDecodeError) as error:

@@ -23,8 +23,9 @@ They are all in their original file formats as I want them to be short, simple a
 ## Coding Agents
 
 Shared agent instructions live in `~/.config/agents/AGENTS.md`. One command
-links them into Claude Code (`~/.claude/CLAUDE.md`) and
-[pi](https://github.com/badlogic/pi-mono) (`~/.pi/agent/AGENTS.md`), links
+links them into Claude Code (`~/.claude/CLAUDE.md`), Codex
+(`~/.codex/AGENTS.md`), and [pi](https://github.com/badlogic/pi-mono)
+(`~/.pi/agent/AGENTS.md`), links
 pi's subagent extension, and generates the agent charters and skills into
 Claude Code, Codex, and pi:
 

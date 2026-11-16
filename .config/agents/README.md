@@ -35,7 +35,7 @@ One set of agent charters and skills, generated for Claude Code, Codex, and pi.
   `~/.codex/agents/<name>.toml`, and `~/.pi/agent/agents/<name>.md`, and
   copies each skill to `~/.claude/skills/<name>/`, `~/.codex/skills/<name>/`,
   and `~/.pi/agent/skills/<name>/`. It also symlinks `AGENTS.md` to
-  `~/.claude/CLAUDE.md` and `~/.pi/agent/AGENTS.md`, and pi's subagent
+  `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.pi/agent/AGENTS.md`, and pi's subagent
   extension to `~/.pi/agent/extensions/subagent` (see
   [Pi subagents](#pi-subagents)).
 
