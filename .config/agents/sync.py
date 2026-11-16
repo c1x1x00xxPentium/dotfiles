@@ -9,12 +9,20 @@ harness's skills directory. Every generated file carries ``GENERATED_MARKER``
 (a skill's ``SKILL.md`` carries ``SKILL_GENERATED_MARKER`` on behalf of its
 folder); the sync only replaces or removes files that carry it, so
 hand-written agents and skills in the same directories are safe.
+
+It also symlinks ``AGENTS.md`` into Claude Code and pi as their global
+instructions, and pi's shipped subagent extension into pi's extensions
+directory. A link is only created or repointed, never replaces a real file.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
+import shutil
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -31,6 +39,13 @@ DEFAULT_SKILLS_DIRS = (
     Path.home() / ".codex" / "skills",
     Path.home() / ".pi" / "agent" / "skills",
 )
+DEFAULT_CLAUDE_MD = Path.home() / ".claude" / "CLAUDE.md"
+DEFAULT_PI_AGENTS_MD = Path.home() / ".pi" / "agent" / "AGENTS.md"
+DEFAULT_PI_SUBAGENT_LINK = Path.home() / ".pi" / "agent" / "extensions" / "subagent"
+NVM_NODE_DIR = Path.home() / ".nvm" / "versions" / "node"
+AGENTS_MD = "AGENTS.md"
+PI_PACKAGE = Path("@earendil-works") / "pi-coding-agent"
+PI_SUBAGENT_EXAMPLE = Path("examples") / "extensions" / "subagent"
 SKILL_FILE_NAME = "SKILL.md"
 IGNORED_SKILL_FILE_NAMES = frozenset({".DS_Store"})
 REQUIRED_SKILL_FIELDS = ("name", "description")
@@ -92,7 +107,15 @@ class AgentSource(NamedTuple):
 
 class Change(NamedTuple):
     path: Path
-    action: str  # "write" or "remove"
+    action: str  # "write", "remove", or "link"
+
+
+class Link(NamedTuple):
+    path: Path
+    target: Path
+    # An existing symlink whose target ends with this is ours to repoint
+    # (another checkout of this repo, or pi under another Node version).
+    owned_suffix: Path
 
 
 def _parse_harness_model(raw: object, where: str) -> HarnessModel:
@@ -423,6 +446,69 @@ def apply_changes(
             change.path.write_text(outputs[change.path])
 
 
+def _node_version_key(path: Path) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", path.name))
+
+
+def find_pi_package() -> Path | None:
+    """Finds the installed pi package: behind the ``pi`` on PATH, under ``npm root -g``, or under nvm."""
+    candidates: list[Path] = []
+    pi = shutil.which("pi")
+    if pi is not None:
+        candidates += [parent for parent in Path(pi).resolve().parents if parent.name == PI_PACKAGE.name]
+    try:
+        npm_root = subprocess.run(
+            ["npm", "root", "-g"], capture_output=True, text=True, check=True, timeout=10
+        ).stdout.strip()
+        candidates.append(Path(npm_root) / PI_PACKAGE)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if NVM_NODE_DIR.is_dir():
+        node_dirs = sorted(NVM_NODE_DIR.iterdir(), key=_node_version_key, reverse=True)
+        candidates += [node_dir / "lib" / "node_modules" / PI_PACKAGE for node_dir in node_dirs]
+    return next((path for path in candidates if (path / PI_SUBAGENT_EXAMPLE).is_dir()), None)
+
+
+def desired_links(
+    source_dir: Path, claude_md: Path, pi_agents_md: Path, pi_subagent_link: Path, pi_package: Path | None
+) -> list[Link]:
+    agents_md = source_dir.resolve() / AGENTS_MD
+    if not agents_md.is_file():
+        raise ConfigError(f"{agents_md}: missing")
+    owned_agents_md = Path(source_dir.resolve().name) / AGENTS_MD
+    links = [Link(claude_md, agents_md, owned_agents_md), Link(pi_agents_md, agents_md, owned_agents_md)]
+    if pi_package is not None:
+        subagent = pi_package / PI_SUBAGENT_EXAMPLE
+        if not subagent.is_dir():
+            raise ConfigError(f"{subagent}: missing; is --pi-package the pi-coding-agent package?")
+        links.append(Link(pi_subagent_link, subagent, PI_PACKAGE / PI_SUBAGENT_EXAMPLE))
+    return links
+
+
+def plan_links(links: Sequence[Link]) -> list[Change]:
+    changes: list[Change] = []
+    for link in links:
+        if link.path.is_symlink():
+            current = Path(os.readlink(link.path))
+            if link.path.exists() and link.path.resolve() == link.target.resolve():
+                continue
+            if link.path.exists() and current.parts[-len(link.owned_suffix.parts) :] != link.owned_suffix.parts:
+                raise ConfigError(f"{link.path} links to {current}, not {link.target}; remove it first")
+        elif link.path.exists():
+            raise ConfigError(f"{link.path} exists and is not a symlink; move it aside first")
+        changes.append(Change(link.path, "link"))
+    return changes
+
+
+def apply_links(changes: Sequence[Change], links: Sequence[Link]) -> None:
+    targets = {link.path: link.target for link in links}
+    for change in changes:
+        if change.path.is_symlink():
+            change.path.unlink()
+        change.path.parent.mkdir(parents=True, exist_ok=True)
+        change.path.symlink_to(targets[change.path])
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="report drift without writing; exit 1 on drift")
@@ -437,24 +523,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         dest="skills_dirs",
         help="skills directory to sync into; repeat for several (default: Claude Code, Codex, and pi)",
     )
+    parser.add_argument("--claude-md", type=Path, default=DEFAULT_CLAUDE_MD)
+    parser.add_argument("--pi-agents-md", type=Path, default=DEFAULT_PI_AGENTS_MD)
+    parser.add_argument("--pi-subagent-link", type=Path, default=DEFAULT_PI_SUBAGENT_LINK)
+    parser.add_argument(
+        "--pi-package",
+        type=Path,
+        help="the installed pi-coding-agent package (default: found from pi, npm, or nvm)",
+    )
     args = parser.parse_args(argv)
     skills_dirs = args.skills_dirs or list(DEFAULT_SKILLS_DIRS)
+    pi_package = args.pi_package or find_pi_package()
+    if pi_package is None:
+        print("skip: pi subagent extension (pi not found; pass --pi-package)", file=sys.stderr)
 
     try:
         outputs = desired_outputs(
             args.source_dir, args.claude_dir, args.codex_dir, args.pi_dir, skills_dirs
         )
         changes = plan_changes(outputs, args.claude_dir, args.codex_dir, args.pi_dir, skills_dirs)
+        links = desired_links(
+            args.source_dir, args.claude_md, args.pi_agents_md, args.pi_subagent_link, pi_package
+        )
+        link_changes = plan_links(links)
     except (ConfigError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 
-    for change in changes:
+    for change in changes + link_changes:
         print(f"{'would ' if args.check else ''}{change.action}: {change.path}")
     if args.check:
-        return 1 if changes else 0
+        return 1 if changes or link_changes else 0
     apply_changes(changes, outputs, skills_dirs)
-    if not changes:
+    apply_links(link_changes, links)
+    if not changes and not link_changes:
         print("up to date")
     return 0
 

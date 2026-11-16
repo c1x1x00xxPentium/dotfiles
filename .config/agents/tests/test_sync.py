@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -51,13 +52,24 @@ class Layout:
         self.codex_dir = root / "codex"
         self.pi_dir = root / "pi"
         self.skills_dirs = [root / "claude-skills", root / "codex-skills", root / "pi-skills"]
+        self.claude_md = root / "claude-home" / "CLAUDE.md"
+        self.pi_agents_md = root / "pi-home" / "AGENTS.md"
+        self.pi_subagent_link = root / "pi-home" / "extensions" / "subagent"
+        self.pi_package = self.add_pi_package(root / "node-v2")
         (self.source_dir / "agents").mkdir(parents=True)
+        (self.source_dir / "AGENTS.md").write_text("Global rules.\n")
         (self.source_dir / "tiers.json").write_text(TIERS_JSON)
         (self.source_dir / "preamble.md").write_text("Shared rules.\n")
         (self.source_dir / "codex-preamble.md").write_text("Codex notes.\n")
         (self.source_dir / "pi-preamble.md").write_text("Pi notes.\n")
         self.add_charter("finder", FAST_CHARTER)
         self.add_charter("thinker", DEEP_CHARTER)
+
+    @staticmethod
+    def add_pi_package(node_modules: Path) -> Path:
+        package = node_modules / sync.PI_PACKAGE
+        (package / sync.PI_SUBAGENT_EXAMPLE).mkdir(parents=True)
+        return package
 
     def add_charter(self, name: str, text: str) -> None:
         (self.source_dir / "agents" / f"{name}.md").write_text(text)
@@ -78,6 +90,10 @@ class Layout:
                 "--codex-dir", str(self.codex_dir),
                 "--pi-dir", str(self.pi_dir),
                 *[arg for skills_dir in self.skills_dirs for arg in ("--skills-dir", str(skills_dir))],
+                "--claude-md", str(self.claude_md),
+                "--pi-agents-md", str(self.pi_agents_md),
+                "--pi-subagent-link", str(self.pi_subagent_link),
+                *(["--pi-package", str(self.pi_package)] if self.pi_package else []),
                 *extra_args,
             ]
         )
@@ -395,3 +411,67 @@ def test_refuses_undecodable_skill_file_in_same_named_folder(layout: Layout) -> 
     assert layout.run("--check") == 2
     assert layout.run() == 2
     assert foreign.read_bytes() == b"\xff\xfe"
+
+
+def test_links_global_instructions_and_pi_subagent_extension(layout: Layout) -> None:
+    assert layout.run() == 0
+    agents_md = (layout.source_dir / "AGENTS.md").resolve()
+    assert layout.claude_md.resolve() == agents_md
+    assert layout.pi_agents_md.resolve() == agents_md
+    assert layout.pi_subagent_link.resolve() == (layout.pi_package / sync.PI_SUBAGENT_EXAMPLE).resolve()
+
+
+def test_check_reports_missing_link_without_creating(layout: Layout) -> None:
+    assert layout.run("--check") == 1
+    assert not layout.claude_md.is_symlink()
+
+
+def test_accepts_link_through_another_path_to_the_same_file(layout: Layout) -> None:
+    alias = layout.source_dir.parent / "alias"
+    alias.symlink_to(layout.source_dir)
+    layout.claude_md.parent.mkdir(parents=True)
+    layout.claude_md.symlink_to(alias / "AGENTS.md")
+    assert layout.run() == 0
+    assert Path(os.readlink(layout.claude_md)) == alias / "AGENTS.md"
+
+
+def test_refuses_to_replace_real_file_with_link(layout: Layout) -> None:
+    layout.claude_md.parent.mkdir(parents=True)
+    layout.claude_md.write_text("my own rules\n")
+    assert layout.run() == 2
+    assert layout.claude_md.read_text() == "my own rules\n"
+
+
+def test_refuses_to_repoint_foreign_link(layout: Layout) -> None:
+    foreign = layout.source_dir.parent / "other.md"
+    foreign.write_text("other\n")
+    layout.claude_md.parent.mkdir(parents=True)
+    layout.claude_md.symlink_to(foreign)
+    assert layout.run() == 2
+    assert layout.claude_md.resolve() == foreign
+
+
+def test_repoints_subagent_link_from_another_node_version(layout: Layout) -> None:
+    old_package = layout.add_pi_package(layout.source_dir.parent / "node-v1")
+    layout.pi_subagent_link.parent.mkdir(parents=True)
+    layout.pi_subagent_link.symlink_to(old_package / sync.PI_SUBAGENT_EXAMPLE)
+    assert layout.run() == 0
+    assert layout.pi_subagent_link.resolve() == (layout.pi_package / sync.PI_SUBAGENT_EXAMPLE).resolve()
+
+
+def test_replaces_dangling_link(layout: Layout) -> None:
+    layout.claude_md.parent.mkdir(parents=True)
+    layout.claude_md.symlink_to(layout.source_dir.parent / "gone" / "AGENTS.md")
+    assert layout.run() == 0
+    assert layout.claude_md.resolve() == (layout.source_dir / "AGENTS.md").resolve()
+
+
+def test_skips_subagent_link_when_pi_is_not_installed(
+    layout: Layout, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sync, "find_pi_package", lambda: None)
+    layout.pi_package = None
+    assert layout.run() == 0
+    assert "skip: pi subagent extension" in capsys.readouterr().err
+    assert not layout.pi_subagent_link.is_symlink()
+    assert layout.claude_md.is_symlink()

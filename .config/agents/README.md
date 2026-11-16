@@ -34,7 +34,10 @@ One set of agent charters and skills, generated for Claude Code, Codex, and pi.
 - `sync.py`: writes `~/.claude/agents/<name>.md`,
   `~/.codex/agents/<name>.toml`, and `~/.pi/agent/agents/<name>.md`, and
   copies each skill to `~/.claude/skills/<name>/`, `~/.codex/skills/<name>/`,
-  and `~/.pi/agent/skills/<name>/`.
+  and `~/.pi/agent/skills/<name>/`. It also symlinks `AGENTS.md` to
+  `~/.claude/CLAUDE.md` and `~/.pi/agent/AGENTS.md`, and pi's subagent
+  extension to `~/.pi/agent/extensions/subagent` (see
+  [Pi subagents](#pi-subagents)).
 
 ## Update the agents and skills
 
@@ -47,7 +50,8 @@ One set of agent charters and skills, generated for Claude Code, Codex, and pi.
 
    `--check` reports drift without writing. The sync only replaces or removes
    files carrying its generated marker, and refuses to overwrite anything
-   else. A skill folder is owned as a whole through the marker in its
+   else. Likewise it only creates or repoints symlinks, never replacing a
+   real file or a link to something unrelated. A skill folder is owned as a whole through the marker in its
    `SKILL.md`, so files added by hand inside a generated skill folder are
    removed, and a folder with no `SKILL.md` marker is refused.
 
@@ -57,14 +61,11 @@ One set of agent charters and skills, generated for Claude Code, Codex, and pi.
 
 pi has no built-in subagent tool. Its shipped example extension reads the
 agents sync.py generates from `~/.pi/agent/agents/` and runs each one in its
-own `pi` process, inheriting the dispatching session's model. One-time
-setup:
-
-```bash
-mkdir -p ~/.pi/agent/extensions
-ln -s "$(npm root -g)/@earendil-works/pi-coding-agent/examples/extensions/subagent" \
-  ~/.pi/agent/extensions/subagent
-```
+own `pi` process, inheriting the dispatching session's model. sync.py
+links the extension into `~/.pi/agent/extensions/subagent`, finding the pi
+package behind the `pi` on `PATH`, under `npm root -g`, or in the newest nvm
+Node that has it (`--pi-package` overrides). It repoints the link when pi
+moves to another Node version, and skips it when pi is not installed.
 
 The tool is named `subagent`, the pi name for Claude Code's `Agent`. A
 checkout that ships its own `subagent` tool (like modular) registers it
